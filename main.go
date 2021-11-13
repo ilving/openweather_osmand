@@ -3,8 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"image"
 	"image/png"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
@@ -19,9 +21,15 @@ var (
 	logFileName string
 )
 
+type cacheItem struct {
+	img image.Image
+	ts  time.Time
+}
+
 type owmHandler struct {
 	tileService   owm.Tileable
 	vectorService owm.Vector
+	cache         map[string]cacheItem
 }
 
 func main() {
@@ -33,6 +41,7 @@ func main() {
 	h := &owmHandler{
 		tileService:   owm.NewTileSource("http://maps.openweathermap.org", apiKey),
 		vectorService: owm.NewVectorService("http://api.openweathermap.org", apiKey),
+		cache:         make(map[string]cacheItem),
 	}
 
 	r := mux.NewRouter()
@@ -49,18 +58,33 @@ func (h *owmHandler) web(w http.ResponseWriter, req *http.Request) {
 	var x, y, z uint16
 	fmt.Sscanf(fmt.Sprintf("%s %s %s", vars["x"], vars["y"], vars["z"]), "%d %d %d", &x, &y, &z)
 
-	logrus.WithField("tile", vars).Info("RQ")
-
 	w.Header().Add("Content-type", "image/png")
+	var img image.Image
 
-	img := h.tileService.GetTile(x, y, z)
-	if img == nil {
-		return
-	}
-	img = h.vectorService.AddInfo(x, y, z, img)
-	if img == nil {
-		return
+	cacheKey := fmt.Sprintf("%d|%d|%d", z, x, y)
+
+	if cimg, ok := h.cache[cacheKey]; ok && cimg.ts.Add(5*time.Minute).After(time.Now().UTC()) {
+		img = cimg.img
+	} else {
+		logrus.WithField("tile", vars).Info("RQ")
+
+		img = h.tileService.GetTile(x, y, z)
+		if img == nil {
+			return
+		}
+		img = h.vectorService.AddInfo(x, y, z, img)
+		if img == nil {
+			return
+		}
+
+		h.cache[cacheKey] = cacheItem{
+			img: img,
+			ts:  time.Now().UTC(),
+		}
+
 	}
 
-	png.Encode(w, img)
+	if img != nil {
+		png.Encode(w, img)
+	}
 }

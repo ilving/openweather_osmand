@@ -8,7 +8,6 @@ import (
 	_ "image/png"
 	"net/http"
 	"sync"
-	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -17,19 +16,13 @@ type Tileable interface {
 	GetTile(x, y, z uint16) image.Image
 }
 
-type cacheItem struct {
-	img image.Image
-	ts  time.Time
-}
-
 type tileService struct {
 	host   string
 	apikey string
-	cache  map[string]cacheItem
 }
 
 func NewTileSource(host, apikey string) Tileable {
-	return &tileService{host: host, apikey: apikey, cache: make(map[string]cacheItem)}
+	return &tileService{host: host, apikey: apikey}
 }
 
 func (t *tileService) pr0(x, y, z uint16) image.Image {
@@ -71,10 +64,6 @@ func (t *tileService) wnd(x, y, z uint16) image.Image {
 func (t *tileService) GetTile(x, y, z uint16) image.Image {
 	// http://maps.openweathermap.org/maps/2.0/weather/{op}/{z}/{x}/{y}?appid={API key}
 
-	cacheKey := fmt.Sprintf("%d|%d|%d", z, x, y)
-	if img, ok := t.cache[cacheKey]; ok && img.ts.Add(2*time.Minute).After(time.Now().UTC()) {
-		return img.img
-	}
 	var pr0, wnd image.Image
 	w := sync.WaitGroup{}
 	w.Add(2)
@@ -96,11 +85,6 @@ func (t *tileService) GetTile(x, y, z uint16) image.Image {
 				res.Set(x, y, wnd.At(x, y))
 			}
 		}
-	}
-
-	t.cache[cacheKey] = cacheItem{
-		img: res,
-		ts:  time.Now().UTC(),
 	}
 
 	return res
